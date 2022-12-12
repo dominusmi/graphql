@@ -136,20 +136,33 @@ export function createAuthPredicates({
     if (where && !authRules.some(hasWhere)) {
         return undefined;
     }
-    const subPredicates = authRules.map((authRule: AuthRule) => {
-        const predicate = createSubPredicate({
-            authRule,
-            skipRoles,
-            skipIsAuthenticated,
-            allow,
-            context,
-            escapeQuotes,
-            bind,
-            where,
-        });
+    // using flatMap removes the need to filter out the potential nulls in the array
+    let unauthenticatedRaised: Neo4jGraphQLAuthenticationError | null = null;
+    const subPredicates = authRules.flatMap((authRule: AuthRule) => {
+        try {
+            const predicate = createSubPredicate({
+                authRule,
+                skipRoles,
+                skipIsAuthenticated,
+                allow,
+                context,
+                escapeQuotes,
+                bind,
+                where,
+            });
 
-        return predicate;
+            return [predicate];
+        } catch (e) {
+            if (e instanceof Neo4jGraphQLAuthenticationError) {
+                unauthenticatedRaised = e;
+                return [];
+            }
+            throw e;
+        }
     });
+    if (unauthenticatedRaised && subPredicates.length == 0) {
+        throw unauthenticatedRaised;
+    }
 
     const orPredicates = Cypher.or(...subPredicates);
     if (!orPredicates) return undefined;
